@@ -43,10 +43,25 @@ io.on("connection", socket => {
       console.log(`${userName} (${socket.id}) joined room ${roomId}`);
 
       let room;
+      let userObjectId;
+
+      // Robust ID handling
+      try {
+        const mongoose = require('mongoose');
+        if (mongoose.Types.ObjectId.isValid(userId)) {
+          userObjectId = new mongoose.Types.ObjectId(userId);
+        } else {
+          console.warn(`[WARN] Invalid ObjectId received: ${userId}. Using as string/raw.`);
+          userObjectId = userId; // Fallback (might fail schema validation but won't crash process)
+        }
+      } catch (e) {
+        console.error(`[ERROR] ID casting failed for ${userId}:`, e);
+        userObjectId = userId;
+      }
 
       // 1. Try to update existing participant's socketId (Atomic)
       room = await Room.findOneAndUpdate(
-        { roomId, "participantes.userId": userId },
+        { roomId, "participantes.userId": userObjectId },
         {
           $set: { "participantes.$.socketId": socket.id, "participantes.$.nombre": userName }
         },
@@ -60,7 +75,7 @@ io.on("connection", socket => {
           {
             $push: {
               participantes: {
-                userId,
+                userId: userObjectId,
                 nombre: userName,
                 socketId: socket.id,
                 joinedAt: new Date()
@@ -254,7 +269,11 @@ io.on("connection", socket => {
       const rooms = await Room.find({ "participantes.socketId": socket.id });
 
       for (const room of rooms) {
-        // Atomic pull to remove participant
+        // Atomic pull to remove participant logic
+        // We want to KEEP the user in the DB (for history?) or REMOVE?
+        // Usually, in a meeting, if you leave, you leave.
+        // Let's remove them from the active participants list.
+
         const updatedRoom = await Room.findOneAndUpdate(
           { _id: room._id },
           {

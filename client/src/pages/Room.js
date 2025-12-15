@@ -116,7 +116,7 @@ function Room() {
         // Join room
         socket.emit("join-room", {
           roomId,
-          userId: user.id,
+          userId: user.id || user._id, // Handle fallback
           userName: user.nombre
         });
 
@@ -137,7 +137,7 @@ function Room() {
         // Continue without video/audio
         socket.emit("join-room", {
           roomId,
-          userId: user.id,
+          userId: user.id || user._id, // Handle fallback
           userName: user.nombre
         });
 
@@ -148,7 +148,7 @@ function Room() {
 
     // Socket event listeners
     socket.on("room-participants", (users) => {
-      console.log("Current participants:", users);
+      console.log("Current participants payload:", JSON.stringify(users, null, 2));
       setParticipants(users);
 
       // Create peers for existing participants
@@ -161,7 +161,8 @@ function Room() {
     });
 
     socket.on("user-joined", ({ userId: newUserId, userName, participants: newParticipants }) => {
-      console.log(`${userName} joined`);
+      console.log(`User joined event: ${userName}, ID: ${newUserId}`);
+      console.log("Full participants list updated:", JSON.stringify(newParticipants, null, 2));
       setParticipants(newParticipants);
       // The new user will initiate the connection
     });
@@ -380,7 +381,7 @@ function Room() {
     if (newMessage.trim()) {
       const messageData = {
         roomId,
-        userId: user.id,
+        userId: user.id || user._id,
         userName: user.nombre,
         texto: newMessage,
         timestamp: new Date()
@@ -398,7 +399,7 @@ function Room() {
 
       socketRef.current.emit("toggle-audio", {
         roomId,
-        userId: user.id,
+        userId: user.id || user._id,
         audioEnabled: audioTrack.enabled
       });
     }
@@ -412,7 +413,7 @@ function Room() {
 
       socketRef.current.emit("toggle-video", {
         roomId,
-        userId: user.id,
+        userId: user.id || user._id,
         videoEnabled: videoTrack.enabled
       });
     }
@@ -668,14 +669,19 @@ function Room() {
           </div>
 
           {/* Peer videos */}
-          {peers.map(({ peerID, peer }) => (
-            <VideoCard
-              key={peerID}
-              peer={peer}
-              peerID={peerID}
-              isActive={activeSpeakers.has(peerID)}
-            />
-          ))}
+          {peers.map(({ peerID, peer }) => {
+            const participant = participants.find(p => p.socketId === peerID);
+            const name = participant ? participant.nombre : "Usuario";
+            return (
+              <VideoCard
+                key={peerID}
+                peer={peer}
+                peerID={peerID}
+                userName={name}
+                isActive={activeSpeakers.has(peerID)}
+              />
+            );
+          })}
         </div>
 
         {/* Control bar */}
@@ -1002,7 +1008,7 @@ function Room() {
   );
 }
 
-function VideoCard({ peer, peerID, isActive }) {
+function VideoCard({ peer, peerID, isActive, userName }) {
   const ref = useRef();
   const [hasVideo, setHasVideo] = useState(true);
   const [status, setStatus] = useState("Conectando...");
@@ -1158,7 +1164,7 @@ function VideoCard({ peer, peerID, isActive }) {
         fontSize: "0.9rem",
         fontWeight: "500"
       }}>
-        Participante
+        {userName || "Participante"}
       </div>
       {isActive && (
         <div style={{
