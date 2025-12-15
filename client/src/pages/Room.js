@@ -49,6 +49,7 @@ function Room() {
   const peersRef = useRef([]);
   const chatEndRef = useRef();
   const fileInputRef = useRef();
+  const iceCandidatesQueue = useRef({}); // Buffer for out-of-order candidates
 
   const host = window.location.hostname;
   const API_URL = '/api';
@@ -143,6 +144,8 @@ function Room() {
         loadChatHistory();
       });
 
+
+
     // Socket event listeners
     socket.on("room-participants", (users) => {
       console.log("Current participants:", users);
@@ -181,6 +184,16 @@ function Room() {
           peer
         });
         setPeers([...peersRef.current]);
+
+        // Process any queued candidates for this peer
+        if (iceCandidatesQueue.current[from]) {
+          console.log(`Processing ${iceCandidatesQueue.current[from].length} queued candidates for ${from}`);
+          iceCandidatesQueue.current[from].forEach(candidate => {
+            peer.signal(candidate);
+          });
+          delete iceCandidatesQueue.current[from];
+        }
+
       } else {
         console.warn("Cannot accept offer, no stream available");
       }
@@ -197,6 +210,13 @@ function Room() {
       const item = peersRef.current.find((p) => p.peerID === from);
       if (item) {
         item.peer.signal(candidate);
+      } else {
+        // Queue the candidate if peer not ready yet
+        console.log(`Queueing candidate for unknown peer ${from}`);
+        if (!iceCandidatesQueue.current[from]) {
+          iceCandidatesQueue.current[from] = [];
+        }
+        iceCandidatesQueue.current[from].push(candidate);
       }
     });
 
@@ -989,18 +1009,25 @@ function VideoCard({ peer, peerID, isActive }) {
   const [debugInfo, setDebugInfo] = useState("");
 
   useEffect(() => {
-    peer.on("stream", (stream) => {
+    // 1. Define event handler
+    const handleStream = (stream) => {
       console.log(`VideoCard: Stream received for ${peerID}`, stream.getTracks());
       if (ref.current) {
         ref.current.srcObject = stream;
-
-        // Check tracks immediately
         const videoTracks = stream.getVideoTracks();
         setHasVideo(videoTracks.length > 0 && videoTracks[0].enabled);
-
         setStatus("Conectado 🟢");
       }
-    });
+    };
+
+    // 2. Listen for event
+    peer.on("stream", handleStream);
+
+    // 3. CRITICAL: Check if stream already exists (missed event)
+    if (peer._remoteStreams && peer._remoteStreams.length > 0) {
+      console.log(`VideoCard: Found existing stream for ${peerID}`);
+      handleStream(peer._remoteStreams[0]);
+    }
 
     peer.on("connect", () => {
       console.log(`VideoCard: Peer ${peerID} connected`);
