@@ -14,7 +14,58 @@ app.use(cors({
 app.use(express.json());
 
 // Connect to MongoDB
-connectMongoDB();
+// Connect to MongoDB
+connectMongoDB().then(async () => {
+  // CLEANUP ON STARTUP
+  try {
+    console.log("🧹 Running startup cleanup...");
+
+    // 1. Reset all participants in all rooms (since server restarted)
+    await Room.updateMany({}, { $set: { participants: [], "participantes": [] } });
+    console.log("✅ Reset all participants to empty.");
+
+    // 2. Delete rooms that don't have a PDF and are empty? 
+    // Or just delete ALL empty rooms?
+    // User wants empty rooms to be gone.
+
+    // Find rooms with no PDF and DELETE them?
+    // Or finds rooms with PDF but nobody in them?
+    const emptyRooms = await Room.find({ $or: [{ participantes: { $size: 0 } }, { participantes: { $exists: false } }] });
+
+    // Import MySQL db
+    const db = require('./db/mysql');
+
+    for (const room of emptyRooms) {
+      // Delete PDF file if exists
+      if (room.pdfActual && room.pdfActual.path) {
+        const fs = require('fs');
+        const path = require('path');
+        try {
+          const filePath = path.resolve(room.pdfActual.path);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`Deleted orphan file: ${filePath}`);
+          }
+        } catch (e) { console.error("Error deleting file:", e); }
+      }
+
+      // Delete from MongoDB
+      await Room.deleteOne({ _id: room._id });
+
+      // Delete from MySQL
+      if (room.roomId) {
+        const sql = 'DELETE FROM salas WHERE room_id = ?';
+        db.query(sql, [room.roomId], (err) => {
+          if (err) console.error(`Error deleting MySQL room ${room.roomId}:`, err);
+          else console.log(`Deleted MySQL room ${room.roomId}`);
+        });
+      }
+      console.log(`Deleted stale room: ${room.roomId}`);
+    }
+  } catch (err) {
+    console.error("Cleanup error:", err);
+  }
+});
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -161,21 +212,55 @@ io.on("connection", socket => {
     try {
       const room = await Room.findOne({ roomId });
       if (room) {
-        room.pdfActual = pdfData;
+        // Ensure pdfData has presenters array initialized
+        const newPdfData = {
+          ...pdfData,
+          presenters: [pdfData.uploadedBy] // Uploader is first presenter
+        };
+        room.pdfActual = newPdfData;
         await room.save();
 
         // Notify all users in room
-        io.to(roomId).emit("pdf-state", pdfData);
+        io.to(roomId).emit("pdf-state", newPdfData);
       }
     } catch (error) {
       console.error("Error updating PDF:", error);
     }
   });
 
-  socket.on("pdf-page-changed", async ({ roomId, currentPage }) => {
+  // Explicit Presentation Toggle
+  socket.on("pdf-toggle-presentation", async ({ roomId, isPresenting }) => {
     try {
       const room = await Room.findOne({ roomId });
       if (room && room.pdfActual) {
+        room.pdfActual.isPresenting = isPresenting;
+        await room.save();
+        // Broadcast update
+        io.to(roomId).emit("pdf-state", room.pdfActual);
+      }
+    } catch (e) { console.error("Error toggling presentation", e); }
+  });
+
+  socket.on("pdf-page-changed", async ({ roomId, currentPage, userId }) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room && room.pdfActual) {
+
+        // PERMISSION CHECK: If linkedGroupId is set
+        if (room.pdfActual.linkedGroupId) {
+          const group = room.groups.find(g => g._id.toString() === room.pdfActual.linkedGroupId);
+          if (group) {
+            // Check if user is member
+            const isMember = group.members.includes(userId);
+            // Check permission (assuming canNavigate implies presenter role here, or add specific check)
+            if (!isMember || !group.permissions.canNavigate) {
+              console.warn(`User ${userId} denied navigation in room ${roomId}`);
+              socket.emit("error-permission", { message: "You don't have permission to navigate." });
+              return;
+            }
+          }
+        }
+
         room.pdfActual.currentPage = currentPage;
         await room.save();
 
@@ -187,11 +272,154 @@ io.on("connection", socket => {
     }
   });
 
+  socket.on("pdf-grant-presenter", async ({ roomId, targetUserId }) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room && room.pdfActual) {
+        if (!room.pdfActual.presenters.includes(targetUserId)) {
+          room.pdfActual.presenters.push(targetUserId);
+          await room.save();
+          io.to(roomId).emit("pdf-presenters-update", { presenters: room.pdfActual.presenters });
+        }
+      }
+    } catch (error) {
+      console.error("Error granting presenter:", error);
+    }
+  });
+
+  socket.on("pdf-revoke-presenter", async ({ roomId, targetUserId }) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room && room.pdfActual) {
+        room.pdfActual.presenters = room.pdfActual.presenters.filter(id => id !== targetUserId);
+        await room.save();
+        io.to(roomId).emit("pdf-presenters-update", { presenters: room.pdfActual.presenters });
+      }
+    } catch (error) {
+      console.error("Error revoking presenter:", error);
+    }
+  });
+
+  // Whiteboard events
+  // Group Management Events
+  socket.on("create-group", async ({ roomId, groupName, permissions }) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room) {
+        room.groups.push({
+          name: groupName,
+          members: [socket.id], // Creator is first member? Or wait for add?
+          // Actually, usually we pass userId. Let's assume passed userId or use socket.id?
+          // Ideally we use persistent userId.
+          // Let's rely on client passing userId or we just don't add anyone initially?
+          // Let's add empty members initially and rely on 'add-group-member' or just creator.
+          members: [],
+          permissions
+        });
+        await room.save();
+        io.to(roomId).emit("groups-update", room.groups);
+      }
+    } catch (e) { console.error("Error creating group:", e); }
+  });
+
+  socket.on("delete-group", async ({ roomId, groupId }) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room) {
+        room.groups = room.groups.filter(g => g._id.toString() !== groupId);
+        // Also unlink PDF if linked
+        if (room.pdfActual && room.pdfActual.linkedGroupId === groupId) {
+          room.pdfActual.linkedGroupId = null;
+          io.to(roomId).emit("pdf-state", room.pdfActual);
+        }
+        await room.save();
+        io.to(roomId).emit("groups-update", room.groups);
+      }
+    } catch (e) { console.error("Error deleting group:", e); }
+  });
+
+  socket.on("add-group-member", async ({ roomId, groupId, userId }) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room) {
+        const group = room.groups.id(groupId);
+        if (group && !group.members.includes(userId)) {
+          group.members.push(userId);
+          await room.save();
+          io.to(roomId).emit("groups-update", room.groups);
+        }
+      }
+    } catch (e) { console.error("Error adding group member:", e); }
+  });
+
+  socket.on("remove-group-member", async ({ roomId, groupId, userId }) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room) {
+        const group = room.groups.id(groupId);
+        if (group) {
+          group.members = group.members.filter(m => m !== userId);
+          await room.save();
+          io.to(roomId).emit("groups-update", room.groups);
+        }
+      }
+    } catch (e) { console.error("Error removing group member:", e); }
+  });
+
+  socket.on("link-pdf-group", async ({ roomId, groupId }) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room && room.pdfActual) {
+        room.pdfActual.linkedGroupId = groupId;
+        await room.save();
+        io.to(roomId).emit("pdf-state", room.pdfActual);
+      }
+    } catch (e) { console.error("Error linking PDF group:", e); }
+  });
+
+
+  // Whiteboard events
+  socket.on("whiteboard-draw", async ({ roomId, line, userId }) => {
+    // Check permissions if PDF is linked to a group
+    try {
+      const room = await Room.findOne({ roomId });
+      if (room && room.pdfActual && room.pdfActual.linkedGroupId) {
+        const group = room.groups.find(g => g._id.toString() === room.pdfActual.linkedGroupId);
+        if (group) {
+          if (!group.members.includes(userId) || !group.permissions.canDraw) {
+            // Deny
+            socket.emit("error-permission", { message: "You don't have permission to draw." });
+            return;
+          }
+        }
+      }
+    } catch (e) { console.error("Permission check error", e); }
+
+    // Broadcast immediately (optimistic update)
+    socket.to(roomId).emit("whiteboard-draw", { line });
+
+    // Persist async
+    Room.updateOne(
+      { roomId },
+      { $push: { "whiteboard.lines": line } }
+    ).catch(err => console.error("Error saving whiteboard line:", err));
+  });
+
+  socket.on("whiteboard-clear", async ({ roomId }) => {
+    try {
+      await Room.updateOne({ roomId }, { $set: { "whiteboard.lines": [] } });
+      io.to(roomId).emit("whiteboard-clear");
+    } catch (error) {
+      console.error("Error clearing whiteboard:", error);
+    }
+  });
+
   socket.on("remove-pdf", async ({ roomId }) => {
     try {
       const room = await Room.findOne({ roomId });
       if (room) {
         room.pdfActual = undefined;
+        room.whiteboard = { lines: [] }; // Reset whiteboard too
         await room.save();
 
         io.to(roomId).emit("pdf-removed");
@@ -296,6 +524,37 @@ io.on("connection", socket => {
 
           if (room.screenSharing?.socketId === socket.id) {
             io.to(room.roomId).emit("screen-share-ended");
+          }
+
+          // CLEANUP: If room is empty, delete it and associated PDF
+          if (updatedRoom.participantes.length === 0) {
+            console.log(`Room ${room.roomId} is empty. Cleaning up...`);
+
+            // Delete PDF file if exists
+            if (updatedRoom.pdfActual && updatedRoom.pdfActual.path) {
+              const fs = require('fs');
+              const path = require('path');
+              const filePath = path.resolve(updatedRoom.pdfActual.path);
+
+              fs.unlink(filePath, (err) => {
+                if (err) console.error(`Error deleting file ${filePath}:`, err);
+                else console.log(`Deleted file ${filePath}`);
+              });
+            }
+
+            // Delete Room
+            await Room.deleteOne({ _id: room._id });
+
+            // Delete from MySQL
+            if (room.roomId) {
+              const db = require('./db/mysql');
+              const sql = 'DELETE FROM salas WHERE room_id = ?';
+              db.query(sql, [room.roomId], (err) => {
+                if (err) console.error(`Error deleting MySQL room ${room.roomId}:`, err);
+                else console.log(`Deleted MySQL room ${room.roomId}`);
+              });
+            }
+            console.log(`Room ${room.roomId} deleted.`);
           }
         }
       }

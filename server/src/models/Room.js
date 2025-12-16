@@ -25,18 +25,38 @@ const roomSchema = new mongoose.Schema({
         }
     }],
     pdfActual: {
+        _id: { type: mongoose.Schema.Types.ObjectId, auto: true }, // Explicit ID
         filename: String,
         path: String,
         totalPages: Number,
-        currentPage: {
-            type: Number,
-            default: 1
+        currentPage: { type: Number, default: 1 },
+        uploadedBy: String,
+        ownerId: String,
+        uploadedAt: Date,
+        presenters: [String],
+        linkedGroupId: String, // Group ID allowed to control
+        orientation: { type: Number, default: 0 },
+        isPresenting: { type: Boolean, default: false }
+    },
+    groups: [{
+        _id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+        name: String,
+        members: [String], // Store User IDs (strings)
+        permissions: {
+            canDraw: { type: Boolean, default: false },
+            canNavigate: { type: Boolean, default: false }
         },
-        uploadedBy: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User'
-        },
-        uploadedAt: Date
+        createdAt: { type: Date, default: Date.now }
+    }],
+    whiteboard: {
+        lines: [
+            {
+                points: [Number],
+                color: String,
+                width: Number,
+                tool: String
+            }
+        ]
     },
     screenSharing: {
         active: {

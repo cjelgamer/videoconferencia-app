@@ -5,6 +5,8 @@ import io from "socket.io-client";
 import { useAuth } from "../context/AuthContext";
 import { useAudioLevel } from "../hooks/useAudioLevel";
 import axios from "axios";
+import PdfViewer from "../components/PdfViewer";
+import GroupManager from "../components/GroupManager";
 
 // WebRTC Configuration
 const peerConfig = {
@@ -38,6 +40,10 @@ function Room() {
   // PDF
   const [pdfState, setPdfState] = useState(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [whiteboardLines, setWhiteboardLines] = useState([]); // Array of lines
+
+  // Groups
+  const [groups, setGroups] = useState([]);
 
   // Active speakers
   const [activeSpeakers, setActiveSpeakers] = useState(new Set());
@@ -246,7 +252,7 @@ function Room() {
     // PDF events
     socket.on("pdf-state", (pdfData) => {
       setPdfState(pdfData);
-      setShowPdf(true);
+      setShowPdf(true); // Auto-show on new PDF
     });
 
     socket.on("pdf-page-update", ({ currentPage }) => {
@@ -256,6 +262,28 @@ function Room() {
     socket.on("pdf-removed", () => {
       setPdfState(null);
       setShowPdf(false);
+      setWhiteboardLines([]);
+    });
+
+    socket.on("pdf-presenters-update", ({ presenters }) => {
+      setPdfState(prev => prev ? { ...prev, presenters } : null);
+    });
+
+    socket.on("whiteboard-draw", ({ line }) => {
+      setWhiteboardLines(prev => [...prev, line]);
+    });
+
+    socket.on("whiteboard-clear", () => {
+      setWhiteboardLines([]);
+    });
+
+    // Group events
+    socket.on("groups-update", (updatedGroups) => {
+      setGroups(updatedGroups);
+    });
+
+    socket.on("error-permission", ({ message }) => {
+      alert(message);
     });
 
     // Active speaker events
@@ -432,6 +460,13 @@ function Room() {
     formData.append("totalPages", "1");
 
     try {
+      // NOTE: With pdfjs-dist on client, we could count pages first then upload.
+      // But for now, let's keep simplistic upload. 
+      // The backend should ideally count pages, but pdfjs needs binary there.
+      // Let's stick to uploading, receiving state, then viewer renders.
+      // But wait! Page 1/1 bug was due to not knowing totalPages.
+      // Frontend PdfViewer will determine totalPages now.
+
       const response = await axios.post(
         `${API_URL}/pdf/upload/${roomId}`,
         formData,
@@ -441,7 +476,15 @@ function Room() {
       );
 
       const pdfData = response.data.pdf;
+      // Socket event is emitted by server as 'pdf-state' or we emit 'pdf-uploaded'? 
+      // Current pattern: Server receives upload -> updates DB -> emits 'pdf-state' ??
+      // Let's check server...
+      // Server DOES NOT emit 'pdf-state' automatically in upload route.
+      // Server waits for 'pdf-uploaded' socket event from client.
+
       socketRef.current.emit("pdf-uploaded", { roomId, pdfData });
+      // Don't set state immediately, wait for socket ack to be in sync? 
+      // Or set local optimizingly.
       setPdfState(pdfData);
       setShowPdf(true);
     } catch (error) {
@@ -452,14 +495,66 @@ function Room() {
     }
   };
 
+  /* 
+   * NEW: Check if I am a presenter 
+   */
+  const amIPresenter = () => {
+    // If Group Linked, check group membership
+    if (pdfState && pdfState.linkedGroupId) {
+      const group = groups.find(g => g._id === pdfState.linkedGroupId);
+      if (group) {
+        const myId = user.id || user._id;
+        return group.members.includes(myId);
+      }
+    }
+
+    if (!pdfState || !pdfState.presenters) return false;
+    const myId = user.id || user._id; // Robust ID check
+    return pdfState.presenters.includes(myId);
+  };
+
+  const amIOwner = () => {
+    if (!pdfState || !pdfState.ownerId) return false;
+    const myId = user.id || user._id;
+    // ownerId comes from upload, might be undefined if old record?
+    // Fallback: If uploadedBy equals me.
+    return pdfState.ownerId === myId || pdfState.uploadedBy === myId;
+  };
+
   const changePdfPage = (direction) => {
     if (!pdfState) return;
+    if (!amIPresenter()) return; // Permissions check
+
     let newPage = pdfState.currentPage + direction;
     if (newPage < 1) newPage = 1;
     if (newPage > pdfState.totalPages) newPage = pdfState.totalPages;
 
     socketRef.current.emit("pdf-page-changed", { roomId, currentPage: newPage });
+    // Optimistic update
     setPdfState({ ...pdfState, currentPage: newPage });
+  };
+
+  const handleWhiteboardDraw = (line) => {
+    // line is { points: [x1, y1, x2, y2], color, ... }
+    socketRef.current.emit("whiteboard-draw", { roomId, line });
+    setWhiteboardLines(prev => [...prev, line]);
+  };
+
+  const grantPresenter = (targetId) => {
+    socketRef.current.emit("pdf-grant-presenter", { roomId, targetUserId: targetId });
+  };
+
+  const revokePresenter = (targetId) => {
+    socketRef.current.emit("pdf-revoke-presenter", { roomId, targetUserId: targetId });
+  };
+
+  // Helper handling PDF page load to update total pages if needed (fix 1/1 bug)
+  const onPdfLoadSuccess = (numPages) => {
+    if (pdfState && pdfState.totalPages !== numPages) {
+      // Update local state and maybe server?
+      // This is a correction mechanism.
+      setPdfState(prev => ({ ...prev, totalPages: numPages }));
+    }
   };
 
   const shareScreen = async () => {
@@ -546,8 +641,8 @@ function Room() {
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "var(--bg-primary)" }}>
-      {/* Main video area */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px" }}>
+      {/* Main video area OR PDF area */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px", overflow: "hidden" }}>
         {/* Header */}
         <div style={{ marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ color: "var(--text-secondary)", margin: 0 }}>
@@ -561,127 +656,191 @@ function Room() {
             >
               {showChat ? "Ocultar" : "Mostrar"} Chat
             </button>
-            <button
-              onClick={() => setShowPdf(!showPdf)}
-              className="btn"
-              style={{ padding: "8px 16px", fontSize: "0.9rem" }}
-            >
-              {showPdf ? "Ocultar" : "Mostrar"} PDF
-            </button>
+            <GroupManager
+              roomId={roomId}
+              socket={socketRef.current}
+              groups={groups}
+              currentUserId={user.id || user._id}
+              pdfActive={!!pdfState}
+              linkedGroupId={pdfState?.linkedGroupId}
+            />
           </div>
         </div>
 
-        {/* Video grid */}
-        <div className="video-grid-container" style={{
-          flex: 1,
-          display: "grid",
-          gridTemplateColumns: `repeat(auto-fit, minmax(300px, 1fr))`,
-          gridAutoRows: "minmax(200px, 1fr)",
-          gap: "15px",
-          padding: "20px",
-          width: "100%",
-          maxHeight: "calc(100vh - 150px)",
-          overflowY: "auto",
-          alignContent: "center"
-        }}>
-          {/* My video */}
-          <div style={{
-            position: "relative",
-            background: "#1a1a1a",
-            borderRadius: "12px",
-            overflow: "hidden",
-            border: isSpeaking ? "3px solid #10b981" : "3px solid transparent",
-            transition: "all 0.3s ease",
-            boxShadow: isSpeaking ? "0 0 20px rgba(16, 185, 129, 0.5)" : "0 4px 6px rgba(0,0,0,0.3)",
-            aspectRatio: "16/9",
-            minHeight: "200px"
-          }}>
-            <video
-              playsInline
-              muted
-              ref={myVideo}
-              autoPlay
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                transform: !screenStream ? "scaleX(-1)" : "none",
-                display: videoEnabled || screenStream ? "block" : "none"
-              }}
-            />
-            {!videoEnabled && (
+        {/* Content Area: Video Grid vs PDF Main Stage */}
+        <div style={{ flex: 1, display: "flex", gap: "20px", overflow: "hidden" }}>
+
+          {/* Main Stage (PDF or Screen Share) */}
+          {(showPdf && pdfState) ? (
+            <div style={{
+              flex: 3,
+              display: "flex",
+              flexDirection: "column",
+              background: "#2a2a2a",
+              borderRadius: "12px",
+              overflow: "hidden"
+            }}>
+              {/* PDF Toolbar */}
               <div style={{
-                width: "100%",
-                height: "100%",
+                padding: "10px",
+                background: "rgba(0,0,0,0.3)",
                 display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+                justifyContent: "space-between",
+                alignItems: "center"
               }}>
+                {/* Page Controls */}
+                <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                  <button
+                    onClick={() => changePdfPage(-1)}
+                    disabled={pdfState.currentPage <= 1 || !amIPresenter()}
+                    className="btn"
+                    style={{ padding: "5px 10px", opacity: amIPresenter() ? 1 : 0.5 }}
+                  >
+                    ←
+                  </button>
+                  <span style={{ color: "white" }}>
+                    {pdfState.currentPage} / {pdfState.totalPages || "--"}
+                  </span>
+                  <button
+                    onClick={() => changePdfPage(1)}
+                    disabled={pdfState.currentPage >= pdfState.totalPages || !amIPresenter()}
+                    className="btn"
+                    style={{ padding: "5px 10px", opacity: amIPresenter() ? 1 : 0.5 }}
+                  >
+                    →
+                  </button>
+                </div>
+
+                {/* Title */}
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.9rem" }}>
+                  {pdfState.filename && pdfState.filename.substring(0, 20)}...
+                  {!amIPresenter() && " (Solo visualización)"}
+                  {amIPresenter() && " (Presentador ✏️)"}
+                </div>
+
+                {/* Close / Actions */}
+                <div>
+                  {amIOwner() && (
+                    <button
+                      onClick={() => socketRef.current.emit("remove-pdf", { roomId })}
+                      style={{ background: "#ef4444", border: "none", color: "white", padding: "5px 10px", borderRadius: "4px", cursor: "pointer" }}
+                    >
+                      Cerrar
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* PDF Canvas */}
+              <div style={{ flex: 1, position: "relative", background: "#525659", overflow: "hidden" }}>
+                {/* We need containerWidth to scale PDF */}
+                <PdfViewer
+                  fileUrl={`${API_URL}/pdf/file/${pdfState.filename}`}
+                  pageNumber={pdfState.currentPage}
+                  onPageLoadSuccess={onPdfLoadSuccess}
+                  whiteboardData={{ lines: whiteboardLines }}
+                  onDraw={handleWhiteboardDraw}
+                  canDraw={amIPresenter()}
+                  containerWidth={800} // Approximate, ideally use ResizeObserver
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {/* Video Grid (Sidebar if PDF active, Main if not) */}
+          <div className="video-grid-container" style={{
+            flex: (showPdf && pdfState) ? 1 : 1,
+            display: "grid",
+            gridTemplateColumns: (showPdf && pdfState) ? "1fr" : "repeat(auto-fit, minmax(300px, 1fr))",
+            gridAutoRows: "minmax(200px, 1fr)",
+            gap: "15px",
+            padding: "10px",
+            width: "100%",
+            overflowY: "auto",
+            alignContent: (showPdf && pdfState) ? "start" : "center",
+            maxHeight: (showPdf && pdfState) ? "none" : "calc(100vh - 150px)" // adjustments
+          }}>
+            {/* My video */}
+            <div style={{
+              position: "relative",
+              background: "#1a1a1a",
+              borderRadius: "12px",
+              overflow: "hidden",
+              border: isSpeaking ? "3px solid #10b981" : "3px solid transparent",
+              transition: "all 0.3s ease",
+              boxShadow: isSpeaking ? "0 0 20px rgba(16, 185, 129, 0.5)" : "0 4px 6px rgba(0,0,0,0.3)",
+              aspectRatio: "16/9",
+              minHeight: "150px"
+            }}>
+              <video
+                playsInline
+                muted
+                ref={myVideo}
+                autoPlay
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  transform: !screenStream ? "scaleX(-1)" : "none",
+                  display: videoEnabled || screenStream ? "block" : "none"
+                }}
+              />
+              {!videoEnabled && (
                 <div style={{
-                  width: "80px",
-                  height: "80px",
-                  borderRadius: "50%",
-                  background: "rgba(255,255,255,0.2)",
+                  width: "100%",
+                  height: "100%",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: "2rem",
-                  color: "white",
-                  fontWeight: "bold"
+                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
                 }}>
-                  {user?.nombre?.charAt(0).toUpperCase()}
+                  <div style={{
+                    width: "50px",
+                    height: "50px",
+                    borderRadius: "50%",
+                    background: "rgba(255,255,255,0.2)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "1.5rem",
+                    color: "white",
+                    fontWeight: "bold"
+                  }}>
+                    {user?.nombre?.charAt(0).toUpperCase()}
+                  </div>
                 </div>
-              </div>
-            )}
-            <div style={{
-              position: "absolute",
-              bottom: "10px",
-              left: "10px",
-              background: "rgba(0,0,0,0.8)",
-              padding: "6px 12px",
-              borderRadius: "6px",
-              color: "white",
-              fontSize: "0.9rem",
-              fontWeight: "500",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px"
-            }}>
-              {!audioEnabled && <span style={{ color: "#ef4444" }}>🔇</span>}
-              {user?.nombre} (Tú)
-            </div>
-            {isSpeaking && (
+              )}
               <div style={{
                 position: "absolute",
-                top: "10px",
-                right: "10px",
-                background: "rgba(16, 185, 129, 0.9)",
+                bottom: "10px",
+                left: "10px",
+                background: "rgba(0,0,0,0.8)",
                 padding: "4px 8px",
-                borderRadius: "4px",
+                borderRadius: "6px",
                 color: "white",
-                fontSize: "0.75rem",
-                fontWeight: "600"
+                fontSize: "0.8rem",
+                fontWeight: "500"
               }}>
-                🎤 Hablando
+                {user?.nombre} (Tú)
               </div>
-            )}
+            </div>
+
+            {/* Peer videos */}
+            {peers.map(({ peerID, peer }) => {
+              const participant = participants.find(p => p.socketId === peerID);
+              const name = participant ? participant.nombre : "Usuario";
+              return (
+                <VideoCard
+                  key={peerID}
+                  peer={peer}
+                  peerID={peerID}
+                  userName={name}
+                  isActive={activeSpeakers.has(peerID)}
+                />
+              );
+            })}
           </div>
 
-          {/* Peer videos */}
-          {peers.map(({ peerID, peer }) => {
-            const participant = participants.find(p => p.socketId === peerID);
-            const name = participant ? participant.nombre : "Usuario";
-            return (
-              <VideoCard
-                key={peerID}
-                peer={peer}
-                peerID={peerID}
-                userName={name}
-                isActive={activeSpeakers.has(peerID)}
-              />
-            );
-          })}
         </div>
 
         {/* Control bar */}
@@ -799,11 +958,28 @@ function Room() {
               👥 Participantes ({participants.length})
             </h3>
             <div style={{ maxHeight: "100px", overflowY: "auto", marginTop: "10px" }}>
-              {participants.map(p => (
-                <div key={p.socketId || p.userId} style={{ fontSize: "0.85rem", color: "#ccc", padding: "2px 0" }}>
-                  • {p.nombre} {p.socketId === socketRef.current?.id ? "(Tú)" : ""}
-                </div>
-              ))}
+              {participants.map(p => {
+                // Check if presenter
+                const isPresenter = pdfState?.presenters?.includes(p.userId);
+                const canManage = amIOwner() && p.userId !== user.id;
+
+                return (
+                  <div key={p.socketId || p.userId} style={{ fontSize: "0.85rem", color: "#ccc", padding: "2px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>
+                      • {p.nombre} {p.socketId === socketRef.current?.id ? "(Tú)" : ""}
+                      {isPresenter && " ✏️"}
+                    </span>
+                    {canManage && (
+                      <button
+                        onClick={() => isPresenter ? revokePresenter(p.userId) : grantPresenter(p.userId)}
+                        style={{ fontSize: "0.7rem", padding: "1px 5px", cursor: "pointer", background: "none", border: "1px solid #666", color: "#aaa", borderRadius: "3px" }}
+                      >
+                        {isPresenter ? "Quitar Rol" : "Hacer Presentador"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -946,64 +1122,7 @@ function Room() {
         </div>
       )}
 
-      {/* PDF panel */}
-      {showPdf && pdfState && (
-        <div style={{
-          width: "400px",
-          background: "rgba(255,255,255,0.03)",
-          borderLeft: "1px solid rgba(255,255,255,0.1)",
-          display: "flex",
-          flexDirection: "column"
-        }}>
-          <div style={{
-            padding: "20px",
-            borderBottom: "1px solid rgba(255,255,255,0.1)"
-          }}>
-            <h3 style={{ margin: 0, color: "var(--text-primary)" }}>PDF Compartido</h3>
-          </div>
-          <div style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "20px",
-            background: "#2a2a2a"
-          }}>
-            <iframe
-              src={`${API_URL}/pdf/file/${pdfState.filename}#page=${pdfState.currentPage}`}
-              style={{ width: "100%", height: "100%", border: "none" }}
-              title="PDF Viewer"
-            />
-          </div>
-          <div style={{
-            padding: "15px",
-            borderTop: "1px solid rgba(255,255,255,0.1)",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center"
-          }}>
-            <button
-              onClick={() => changePdfPage(-1)}
-              disabled={pdfState.currentPage === 1}
-              className="btn"
-              style={{ padding: "8px 16px" }}
-            >
-              ← Anterior
-            </button>
-            <span style={{ color: "var(--text-primary)" }}>
-              {pdfState.currentPage} / {pdfState.totalPages}
-            </span>
-            <button
-              onClick={() => changePdfPage(1)}
-              disabled={pdfState.currentPage === pdfState.totalPages}
-              className="btn"
-              style={{ padding: "8px 16px" }}
-            >
-              Siguiente →
-            </button>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }
