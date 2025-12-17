@@ -51,6 +51,11 @@ connectMongoDB().then(async () => {
       // Delete from MongoDB
       await Room.deleteOne({ _id: room._id });
 
+      // Cleanup Messages
+      const Message = require('./models/Message');
+      await Message.deleteMany({ roomId: room.roomId });
+      console.log(`Deleted messages for room: ${room.roomId}`);
+
       console.log(`Deleted stale room: ${room.roomId}`);
     }
   } catch (err) {
@@ -502,36 +507,31 @@ io.on("connection", socket => {
     // Broadcast immediately (optimistic update)
     socket.to(roomId).emit("whiteboard-draw", { line, page });
 
-    // Persist async per page
+    // Persist async per page using atomic operators to avoid VersionError
     try {
-      // Use MongoDB update to push to specific page bucket
-      // If page bucket doesn't exist, this is tricky with atomic operators.
-      // We might need to findOne, modify, save.
-      const room = await Room.findOne({ roomId });
-      if (room) {
-        let pageData = room.whiteboard.find(wb => wb.page === page);
-        if (!pageData) {
-          // Initialize page
-          room.whiteboard.push({ page, lines: [line] });
-        } else {
-          pageData.lines.push(line);
-        }
-        await room.save();
+      // 1. Try to push to existing page
+      const updateResult = await Room.updateOne(
+        { roomId, "whiteboard.page": page },
+        { $push: { "whiteboard.$.lines": line } }
+      );
+
+      // 2. If page didn't exist (nModified: 0), push new page entry
+      if (updateResult.modifiedCount === 0) {
+        await Room.updateOne(
+          { roomId },
+          { $push: { whiteboard: { page, lines: [line] } } }
+        );
       }
     } catch (err) { console.error("Error saving whiteboard line:", err); }
   });
 
   socket.on("whiteboard-clear", async ({ roomId, page }) => {
     try {
-      const room = await Room.findOne({ roomId });
-      if (room) {
-        const pageData = room.whiteboard.find(wb => wb.page === page);
-        if (pageData) {
-          pageData.lines = [];
-          await room.save();
-        }
-        io.to(roomId).emit("whiteboard-clear", { page });
-      }
+      await Room.updateOne(
+        { roomId, "whiteboard.page": page },
+        { $set: { "whiteboard.$.lines": [] } }
+      );
+      io.to(roomId).emit("whiteboard-clear", { page });
     } catch (error) {
       console.error("Error clearing whiteboard:", error);
     }
@@ -542,7 +542,7 @@ io.on("connection", socket => {
       const room = await Room.findOne({ roomId });
       if (room) {
         room.pdfActual = undefined;
-        room.whiteboard = { lines: [] }; // Reset whiteboard too
+        room.whiteboard = []; // Reset whiteboard correctly as empty array
         await room.save();
 
         io.to(roomId).emit("pdf-removed");

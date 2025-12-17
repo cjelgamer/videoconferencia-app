@@ -267,7 +267,7 @@ function Room() {
     socket.on("pdf-removed", () => {
       setPdfState(null);
       setShowPdf(false);
-      setWhiteboardLines([]);
+      setWhiteboardData({});
     });
 
     socket.on("pdf-presenters-update", ({ presenters }) => {
@@ -476,11 +476,20 @@ function Room() {
       // But wait! Page 1/1 bug was due to not knowing totalPages.
       // Frontend PdfViewer will determine totalPages now.
 
+      const token = localStorage.getItem("token");
+      if (!token) {
+        alert("No hay sesión activa");
+        return;
+      }
+
       const response = await axios.post(
         `${API_URL}/pdf/upload/${roomId}`,
         formData,
         {
-          headers: { "Content-Type": "multipart/form-data" }
+          headers: {
+            "Content-Type": "multipart/form-data",
+            "Authorization": `Bearer ${token}`
+          }
         }
       );
 
@@ -523,11 +532,13 @@ function Room() {
   };
 
   const amIOwner = () => {
-    if (!pdfState || !pdfState.ownerId) return false;
+    if (!pdfState) return false;
     const myId = user.id || user._id;
-    // ownerId comes from upload, might be undefined if old record?
-    // Fallback: If uploadedBy equals me.
-    return pdfState.ownerId === myId || pdfState.uploadedBy === myId;
+    // Robust check: compare as strings
+    const ownerId = pdfState.ownerId || pdfState.uploadedBy;
+    if (!ownerId) return false;
+
+    return String(ownerId) === String(myId);
   };
 
   const changePdfPage = (direction) => {
@@ -1114,7 +1125,8 @@ function Room() {
               </div>
             ) : (
               messages.map((msg, idx) => {
-                const isMe = msg.userId === user.id;
+                const myId = user.id || user._id; // Robust ID
+                const isMe = msg.userId === myId;
                 const time = new Date(msg.timestamp).toLocaleTimeString('es-ES', {
                   hour: '2-digit',
                   minute: '2-digit'

@@ -137,19 +137,19 @@ const GroupManager = ({ groups, socket, roomId, currentPdf, user }) => {
                                     <button onClick={() => joinGroupRequest(g._id)} style={{ flex: 1, background: '#3b82f6', border: 'none', padding: '6px', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.9rem' }}>Unirse</button>
                                 )}
 
-                                {(isCreator || isMember) && (
+                                {(isCreator || isMember) && currentPdf && (
                                     <button
                                         onClick={() => linkPdf(g._id)}
-                                        disabled={currentPdf?.linkedGroupId === g._id}
+                                        disabled={currentPdf.linkedGroupId === g._id}
                                         style={{
                                             flex: 1,
-                                            background: currentPdf?.linkedGroupId === g._id ? '#10b981' : '#6b7280',
+                                            background: currentPdf.linkedGroupId === g._id ? '#10b981' : '#6b7280',
                                             border: 'none', padding: '6px', borderRadius: '4px', color: 'white',
-                                            cursor: currentPdf?.linkedGroupId === g._id ? 'default' : 'pointer',
+                                            cursor: currentPdf.linkedGroupId === g._id ? 'default' : 'pointer',
                                             fontSize: '0.9rem'
                                         }}
                                     >
-                                        {currentPdf?.linkedGroupId === g._id ? 'Vinculado' : 'Vincular PDF'}
+                                        {currentPdf.linkedGroupId === g._id ? 'Vinculado' : 'Vincular PDF'}
                                     </button>
                                 )}
                             </div>
