@@ -1,8 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 // Worker setup for pdfjs-dist
-// We copied the worker to public/pdf.worker.min.js regarding the build step
-pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+// Using CDN to ensure correct version and headers. Use .mjs for module support in v5+
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
+
+// Polyfill for Promise.withResolvers (required for pdfjs-dist v5+)
+if (typeof Promise.withResolvers === 'undefined') {
+    Promise.withResolvers = function () {
+        let resolve, reject;
+        const promise = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        return { promise, resolve, reject };
+    };
+}
 
 const PdfViewer = ({
     fileUrl,
@@ -10,7 +22,7 @@ const PdfViewer = ({
     scale = 1.0,
     onPageLoadSuccess,
     onPageLoadError,
-    whiteboardData,
+    whiteboardLines = [], // Default to empty array
     onDraw,
     canDraw,
     containerWidth
@@ -21,6 +33,7 @@ const PdfViewer = ({
     const [drawing, setDrawing] = useState(false);
     const [lastPos, setLastPos] = useState(null);
     const [viewport, setViewport] = useState(null);
+    const [pageError, setPageError] = useState(null);
 
     // Load and render PDF page
     useEffect(() => {
@@ -30,12 +43,21 @@ const PdfViewer = ({
             if (!fileUrl) return;
 
             try {
+                // Clear error
+                setPageError(null);
+
                 const loadingTask = pdfjsLib.getDocument(fileUrl);
+                // Wait for PDF to load info
                 const pdf = await loadingTask.promise;
 
                 if (!active) return;
 
-                const page = await pdf.getPage(pageNumber);
+                console.log(`PdfViewer: Loaded. Pages: ${pdf.numPages}, Requesting: ${pageNumber}`);
+
+                // Validation
+                const safePageNum = Math.min(Math.max(1, parseInt(pageNumber) || 1), pdf.numPages);
+
+                const page = await pdf.getPage(safePageNum);
 
                 if (!active) return;
 
@@ -71,15 +93,14 @@ const PdfViewer = ({
                 setRenderTask(task);
 
                 await task.promise;
-                if (onPageLoadSuccess) onPageLoadSuccess(pdf.numPages);
+
+                if (onPageLoadSuccess) onPageLoadSuccess(pdf);
 
             } catch (error) {
-                if (error.name === 'RenderingCancelledException') {
-                    // Check for cancellation
-                } else {
-                    console.error('Error rendering PDF:', error);
-                    if (onPageLoadError) onPageLoadError(error);
-                }
+                if (!active) return;
+                console.error("Error rendering PDF page:", error);
+                setPageError(error.message || "Error cargando PDF");
+                if (onPageLoadError) onPageLoadError(error);
             }
         };
 
@@ -88,21 +109,21 @@ const PdfViewer = ({
         return () => {
             active = false;
             if (renderTask) {
-                // renderTask.cancel(); // causing issues sometimes
+                renderTask.cancel();
             }
         };
-    }, [fileUrl, pageNumber, containerWidth]);
+    }, [fileUrl, pageNumber, containerWidth, scale]);
 
     // Render Whiteboard Lines
     useEffect(() => {
-        if (!whiteboardRef.current || !viewport || !whiteboardData) return;
+        if (!whiteboardRef.current || !viewport) return;
 
         const canvas = whiteboardRef.current;
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear before redraw
 
         // Draw all lines
-        whiteboardData.lines.forEach(line => {
+        whiteboardLines.forEach(line => {
             if (line.points.length < 2) return;
 
             ctx.beginPath();
@@ -130,7 +151,7 @@ const PdfViewer = ({
             ctx.stroke();
         });
 
-    }, [whiteboardData, viewport]);
+    }, [whiteboardLines, viewport]);
 
 
     // Drawing Handlers
@@ -140,10 +161,10 @@ const PdfViewer = ({
         const x = (e.clientX || e.touches[0].clientX) - rect.left;
         const y = (e.clientY || e.touches[0].clientY) - rect.top;
 
-        // Normalize immediately
+        // Normalize relative to visual size (rect)
         return {
-            x: x / canvas.width,
-            y: y / canvas.height
+            x: x / rect.width,
+            y: y / rect.height
         };
     }
 
@@ -187,6 +208,23 @@ const PdfViewer = ({
         setDrawing(false);
         setLastPos(null);
     };
+
+    if (pageError) {
+        return (
+            <div style={{
+                color: 'white',
+                background: '#dc2626',
+                padding: '20px',
+                borderRadius: '8px',
+                textAlign: 'center',
+                margin: '20px'
+            }}>
+                <h3>Error visualizando PDF</h3>
+                <p>{pageError}</p>
+                <code style={{ fontSize: '0.8rem', background: 'rgba(0,0,0,0.2)', padding: '4px' }}>{fileUrl}</code>
+            </div>
+        );
+    }
 
     return (
         <div style={{ position: 'relative', width: '100%', height: '100%' }}>

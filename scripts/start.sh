@@ -30,13 +30,8 @@ fi
 
 echo ""
 
-# Verificar MySQL
-echo -e "${YELLOW}Verificando MySQL...${NC}"
-if systemctl is-active --quiet mysql || systemctl is-active --quiet mariadb; then
-    echo -e "${GREEN}✅ MySQL está corriendo${NC}"
-else
-    echo -e "${YELLOW}⚠️  MySQL no está corriendo (opcional)${NC}"
-fi
+# MySQL check removed
+
 
 echo ""
 echo -e "${GREEN}=== Iniciando Servidores ===${NC}\n"

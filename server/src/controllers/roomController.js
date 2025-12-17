@@ -1,41 +1,30 @@
-const db = require('../db/mysql');
 const Room = require('../models/Room');
 const { v4: uuidv4 } = require('uuid');
 
+// Create a new room
 // Create a new room
 exports.createRoom = async (req, res) => {
     try {
         const creatorId = req.user?.userId || req.body.creatorId || null;
         const roomId = uuidv4().substring(0, 8).toUpperCase(); // Short ID
 
-        // Create in MySQL for backward compatibility
-        const sql = 'INSERT INTO salas (room_id, creador) VALUES (?, ?)';
-        db.query(sql, [roomId, creatorId], async (err, result) => {
-            if (err) {
-                console.error('MySQL error:', err);
-                return res.status(500).json({ error: 'Database error' });
-            }
+        // Create in MongoDB
+        try {
+            const mongoRoom = new Room({
+                roomId,
+                creador: creatorId || undefined, // Use undefined instead of null for optional fields
+                participantes: []
+            });
+            await mongoRoom.save();
 
-            // Also create in MongoDB for group features
-            try {
-                const mongoRoom = new Room({
-                    roomId,
-                    creador: creatorId || undefined, // Use undefined instead of null for optional fields
-                    participantes: []
-                });
-                await mongoRoom.save();
-
-                res.json({
-                    roomId,
-                    id: result.insertId,
-                    message: 'Sala creada exitosamente'
-                });
-            } catch (mongoErr) {
-                console.error('MongoDB error:', mongoErr);
-                // Continue even if MongoDB fails
-                res.json({ roomId, id: result.insertId });
-            }
-        });
+            res.json({
+                roomId,
+                message: 'Sala creada exitosamente'
+            });
+        } catch (mongoErr) {
+            console.error('MongoDB error:', mongoErr);
+            res.status(500).json({ error: 'Database error' });
+        }
     } catch (error) {
         console.error('Error creating room:', error);
         res.status(500).json({ error: 'Error al crear sala' });

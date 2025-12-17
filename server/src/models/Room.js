@@ -41,23 +41,29 @@ const roomSchema = new mongoose.Schema({
     groups: [{
         _id: { type: mongoose.Schema.Types.ObjectId, auto: true },
         name: String,
-        members: [String], // Store User IDs (strings)
+        creatorId: String, // Store creator userId
+        members: [String], // Store User IDs
+        requests: [ // Join requests
+            { userId: String, userName: String }
+        ],
         permissions: {
             canDraw: { type: Boolean, default: false },
             canNavigate: { type: Boolean, default: false }
         },
         createdAt: { type: Date, default: Date.now }
     }],
-    whiteboard: {
-        lines: [
-            {
+    // Per-page whiteboard
+    whiteboard: [
+        {
+            page: { type: Number, required: true },
+            lines: [{
                 points: [Number],
                 color: String,
                 width: Number,
                 tool: String
-            }
-        ]
-    },
+            }]
+        }
+    ],
     screenSharing: {
         active: {
             type: Boolean,

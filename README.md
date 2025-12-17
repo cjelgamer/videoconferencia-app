@@ -16,8 +16,7 @@ Sistema completo de videoconferencia multi-usuario con chat en tiempo real, comp
 ## 📋 Requisitos Previos
 
 - Node.js (v14+)
-- MongoDB (instalado y corriendo)
-- MySQL (con base de datos `videoconferencia`)
+- **Base de Datos**: MongoDB (usuarios, historial, salas)
 
 ## ⚙️ Instalación
 

@@ -16,6 +16,8 @@ const peerConfig = {
   ]
 };
 
+const API_URL = window.location.origin + '/api';
+
 function Room() {
   const { roomId } = useParams();
   const { user } = useAuth();
@@ -40,7 +42,9 @@ function Room() {
   // PDF
   const [pdfState, setPdfState] = useState(null);
   const [uploadingPdf, setUploadingPdf] = useState(false);
-  const [whiteboardLines, setWhiteboardLines] = useState([]); // Array of lines
+  const [whiteboardData, setWhiteboardData] = useState({}); // { 1: [lines], 2: [lines] ... }
+  const [currentPage, setCurrentPage] = useState(1);
+  const [activeTool, setActiveTool] = useState("pen"); // pen, eraser // Array of lines
 
   // Groups
   const [groups, setGroups] = useState([]);
@@ -251,6 +255,7 @@ function Room() {
 
     // PDF events
     socket.on("pdf-state", (pdfData) => {
+      console.log("Room.js: Received pdf-state:", pdfData);
       setPdfState(pdfData);
       setShowPdf(true); // Auto-show on new PDF
     });
@@ -269,12 +274,16 @@ function Room() {
       setPdfState(prev => prev ? { ...prev, presenters } : null);
     });
 
-    socket.on("whiteboard-draw", ({ line }) => {
-      setWhiteboardLines(prev => [...prev, line]);
+    socket.on("whiteboard-draw", ({ line, page }) => {
+      // line includes { points, color, width }
+      setWhiteboardData(prev => {
+        const pageLines = prev[page] || [];
+        return { ...prev, [page]: [...pageLines, line] };
+      });
     });
 
-    socket.on("whiteboard-clear", () => {
-      setWhiteboardLines([]);
+    socket.on("whiteboard-clear", ({ page }) => {
+      setWhiteboardData(prev => ({ ...prev, [page]: [] }));
     });
 
     // Group events
@@ -529,15 +538,31 @@ function Room() {
     if (newPage < 1) newPage = 1;
     if (newPage > pdfState.totalPages) newPage = pdfState.totalPages;
 
-    socketRef.current.emit("pdf-page-changed", { roomId, currentPage: newPage });
+    socketRef.current.emit("pdf-page-changed", { roomId, currentPage: newPage, userId: user.id || user._id });
     // Optimistic update
     setPdfState({ ...pdfState, currentPage: newPage });
   };
 
   const handleWhiteboardDraw = (line) => {
     // line is { points: [x1, y1, x2, y2], color, ... }
-    socketRef.current.emit("whiteboard-draw", { roomId, line });
-    setWhiteboardLines(prev => [...prev, line]);
+    const fileOwnerId = user.id || user._id;
+    const page = pdfState ? pdfState.currentPage : 1;
+
+    // Add page info to line if needed by components, but mainly for storage
+    const lineWithTool = { ...line, tool: activeTool };
+
+    socketRef.current.emit("whiteboard-draw", { roomId, line: lineWithTool, userId: fileOwnerId, page });
+
+    setWhiteboardData(prev => {
+      const pageLines = prev[page] || [];
+      return { ...prev, [page]: [...pageLines, lineWithTool] };
+    });
+  };
+
+  const handleClearWhiteboard = () => {
+    const page = pdfState ? pdfState.currentPage : 1;
+    socketRef.current.emit("whiteboard-clear", { roomId, page });
+    setWhiteboardData(prev => ({ ...prev, [page]: [] }));
   };
 
   const grantPresenter = (targetId) => {
@@ -551,9 +576,9 @@ function Room() {
   // Helper handling PDF page load to update total pages if needed (fix 1/1 bug)
   const onPdfLoadSuccess = (numPages) => {
     if (pdfState && pdfState.totalPages !== numPages) {
-      // Update local state and maybe server?
-      // This is a correction mechanism.
       setPdfState(prev => ({ ...prev, totalPages: numPages }));
+      // Sync with server
+      socketRef.current.emit("pdf-update-metadata", { roomId, totalPages: numPages });
     }
   };
 
@@ -639,6 +664,8 @@ function Room() {
     navigate("/");
   };
 
+  const shouldShowControls = amIPresenter();
+
   return (
     <div style={{ display: "flex", height: "100vh", background: "var(--bg-primary)" }}>
       {/* Main video area OR PDF area */}
@@ -660,9 +687,8 @@ function Room() {
               roomId={roomId}
               socket={socketRef.current}
               groups={groups}
-              currentUserId={user.id || user._id}
-              pdfActive={!!pdfState}
-              linkedGroupId={pdfState?.linkedGroupId}
+              user={user}
+              currentPdf={pdfState}
             />
           </div>
         </div>
@@ -671,7 +697,8 @@ function Room() {
         <div style={{ flex: 1, display: "flex", gap: "20px", overflow: "hidden" }}>
 
           {/* Main Stage (PDF or Screen Share) */}
-          {(showPdf && pdfState) ? (
+          {/* Only show PDF if I am presenter OR if presentation is active */}
+          {(showPdf && pdfState && (pdfState.isPresenting || amIPresenter())) ? (
             <div style={{
               flex: 3,
               display: "flex",
@@ -719,13 +746,33 @@ function Room() {
                 </div>
 
                 {/* Close / Actions */}
-                <div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  {amIPresenter() && (
+                    <>
+                      {!pdfState.isPresenting ? (
+                        <button
+                          onClick={() => socketRef.current.emit("pdf-toggle-presentation", { roomId, isPresenting: true })}
+                          style={{ background: "#10b981", border: "none", color: "white", padding: "5px 10px", borderRadius: "4px", cursor: "pointer" }}
+                        >
+                          ▶ Presentar a Todos
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => socketRef.current.emit("pdf-toggle-presentation", { roomId, isPresenting: false })}
+                          style={{ background: "#f59e0b", border: "none", color: "white", padding: "5px 10px", borderRadius: "4px", cursor: "pointer" }}
+                        >
+                          ⏸ Pausar Presentación
+                        </button>
+                      )}
+                    </>
+                  )}
+
                   {amIOwner() && (
                     <button
-                      onClick={() => socketRef.current.emit("remove-pdf", { roomId })}
+                      onClick={() => socketRef.current.emit("pdf-remove", { roomId })}
                       style={{ background: "#ef4444", border: "none", color: "white", padding: "5px 10px", borderRadius: "4px", cursor: "pointer" }}
                     >
-                      Cerrar
+                      Eliminar PDF
                     </button>
                   )}
                 </div>
@@ -734,31 +781,49 @@ function Room() {
               {/* PDF Canvas */}
               <div style={{ flex: 1, position: "relative", background: "#525659", overflow: "hidden" }}>
                 {/* We need containerWidth to scale PDF */}
-                <PdfViewer
-                  fileUrl={`${API_URL}/pdf/file/${pdfState.filename}`}
-                  pageNumber={pdfState.currentPage}
-                  onPageLoadSuccess={onPdfLoadSuccess}
-                  whiteboardData={{ lines: whiteboardLines }}
-                  onDraw={handleWhiteboardDraw}
-                  canDraw={amIPresenter()}
-                  containerWidth={800} // Approximate, ideally use ResizeObserver
-                />
+                <div style={{ position: "relative", width: "100%", height: "100%" }}>
+                  <PdfViewer
+                    fileUrl={`${API_URL}/pdf/file/${pdfState.filename}`}
+                    fileType={pdfState.filename.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'}
+                    pageNumber={pdfState.currentPage}
+                    onPageChange={(p) => {
+                      // Already handled by socket event usually, but local update too
+                    }}
+                    scale={1.0}
+                    onPageLoadSuccess={(pdf) => {
+                      if (onPdfLoadSuccess) onPdfLoadSuccess(pdf.numPages);
+                    }}
+                    // Pass ONLY lines for current page
+                    whiteboardLines={whiteboardData[pdfState.currentPage] || []}
+                    onDraw={handleWhiteboardDraw}
+                    canDraw={shouldShowControls}
+                    tool={activeTool}
+                  />
+                  {/* Eraser / Pen toggle could go here or in Toolbar */}
+                  {shouldShowControls && (
+                    <div style={{ position: 'absolute', top: 10, left: 10, display: 'flex', gap: 5 }}>
+                      <button onClick={() => setActiveTool("pen")} style={{ background: activeTool === "pen" ? "#3b82f6" : "white" }}>✏️</button>
+                      <button onClick={() => setActiveTool("eraser")} style={{ background: activeTool === "eraser" ? "#ef4444" : "white" }}>🧹</button>
+                      <button onClick={handleClearWhiteboard} style={{ background: "white" }}>🗑️ Page</button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ) : null}
 
           {/* Video Grid (Sidebar if PDF active, Main if not) */}
           <div className="video-grid-container" style={{
-            flex: (showPdf && pdfState) ? 1 : 1,
+            flex: (showPdf && pdfState && (pdfState.isPresenting || amIPresenter())) ? 1 : 1,
             display: "grid",
-            gridTemplateColumns: (showPdf && pdfState) ? "1fr" : "repeat(auto-fit, minmax(300px, 1fr))",
+            gridTemplateColumns: (showPdf && pdfState && (pdfState.isPresenting || amIPresenter())) ? "1fr" : "repeat(auto-fit, minmax(300px, 1fr))",
             gridAutoRows: "minmax(200px, 1fr)",
             gap: "15px",
             padding: "10px",
             width: "100%",
             overflowY: "auto",
-            alignContent: (showPdf && pdfState) ? "start" : "center",
-            maxHeight: (showPdf && pdfState) ? "none" : "calc(100vh - 150px)" // adjustments
+            alignContent: (showPdf && pdfState && (pdfState.isPresenting || amIPresenter())) ? "start" : "center",
+            maxHeight: (showPdf && pdfState && (pdfState.isPresenting || amIPresenter())) ? "none" : "calc(100vh - 150px)" // adjustments
           }}>
             {/* My video */}
             <div style={{
@@ -897,29 +962,53 @@ function Room() {
           >
             {screenStream ? "⏹️ Detener" : "🖥️ Compartir Pantalla"}
           </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadingPdf}
-            style={{
-              padding: "12px 20px",
-              borderRadius: "8px",
-              border: "none",
-              background: "#8b5cf6",
-              color: "white",
-              cursor: uploadingPdf ? "not-allowed" : "pointer",
-              fontSize: "1rem",
-              fontWeight: "500"
-            }}
-          >
-            {uploadingPdf ? "Subiendo..." : "📄 Subir PDF"}
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/pdf"
-            onChange={handlePdfUpload}
-            style={{ display: "none" }}
-          />
+
+          {/* Upload/Delete PDF Button */}
+          {pdfState ? (
+            amIOwner() && (
+              <button
+                onClick={() => socketRef.current.emit("pdf-remove", { roomId })}
+                style={{
+                  padding: "12px 20px",
+                  borderRadius: "8px",
+                  border: "none",
+                  background: "#ef4444",
+                  color: "white",
+                  cursor: "pointer",
+                  fontSize: "1rem",
+                  fontWeight: "500"
+                }}
+              >
+                🗑️ Eliminar PDF
+              </button>
+            )
+          ) : (
+            <>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingPdf}
+                style={{
+                  padding: "12px 20px",
+                  borderRadius: "8px",
+                  border: "none",
+                  background: "#8b5cf6",
+                  color: "white",
+                  cursor: uploadingPdf ? "not-allowed" : "pointer",
+                  fontSize: "1rem",
+                  fontWeight: "500"
+                }}
+              >
+                {uploadingPdf ? "Subiendo..." : "📄 Subir PDF"}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf"
+                onChange={handlePdfUpload}
+                style={{ display: "none" }}
+              />
+            </>
+          )}
           <button
             onClick={leaveRoom}
             style={{
