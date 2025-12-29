@@ -442,17 +442,76 @@ function Room() {
     }
   };
 
-  const toggleVideo = () => {
-    if (myStream) {
-      const videoTrack = myStream.getVideoTracks()[0];
-      videoTrack.enabled = !videoTrack.enabled;
-      setVideoEnabled(videoTrack.enabled);
+  const toggleVideo = async () => {
+    if (!myStream) return;
+
+    const videoTrack = myStream.getVideoTracks()[0];
+
+    if (videoEnabled) {
+      // Turn OFF camera - stop the track completely to release the device
+      if (videoTrack) {
+        videoTrack.stop();
+      }
+      setVideoEnabled(false);
+
+      // Remove video track from all peer connections
+      peersRef.current.forEach(({ peer }) => {
+        const sender = peer._pc?.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(null);
+        }
+      });
 
       socketRef.current.emit("toggle-video", {
         roomId,
         userId: user.id || user._id,
-        videoEnabled: videoTrack.enabled
+        videoEnabled: false
       });
+    } else {
+      // Turn ON camera - request new video stream
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false
+        });
+
+        const newVideoTrack = newStream.getVideoTracks()[0];
+
+        // Replace the video track in the current stream
+        const oldVideoTrack = myStream.getVideoTracks()[0];
+        if (oldVideoTrack) {
+          myStream.removeTrack(oldVideoTrack);
+        }
+        myStream.addTrack(newVideoTrack);
+
+        // Update local video element
+        if (myVideo.current) {
+          myVideo.current.srcObject = myStream;
+        }
+
+        // Update streamRef
+        streamRef.current = myStream;
+
+        // Replace video track in all peer connections
+        peersRef.current.forEach(({ peer }) => {
+          const sender = peer._pc?.getSenders().find(s => s.track === null || s.track?.kind === 'video');
+          if (sender) {
+            sender.replaceTrack(newVideoTrack);
+          }
+        });
+
+        setVideoEnabled(true);
+        setMyStream(myStream);
+
+        socketRef.current.emit("toggle-video", {
+          roomId,
+          userId: user.id || user._id,
+          videoEnabled: true
+        });
+      } catch (error) {
+        console.error("Error restarting camera:", error);
+        alert("No se pudo activar la cámara. Verifica los permisos.");
+      }
     }
   };
 
@@ -868,18 +927,18 @@ function Room() {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+                  background: "#6c757d"
                 }}>
                   <div style={{
                     width: "50px",
                     height: "50px",
                     borderRadius: "50%",
-                    background: "rgba(255,255,255,0.2)",
+                    background: "rgba(255,255,255,0.9)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     fontSize: "1.5rem",
-                    color: "white",
+                    color: "#6c757d",
                     fontWeight: "bold"
                   }}>
                     {user?.nombre?.charAt(0).toUpperCase()}
@@ -947,9 +1006,9 @@ function Room() {
             onClick={toggleVideo}
             style={{
               padding: "12px 20px",
-              borderRadius: "8px",
+              borderRadius: "6px",
               border: "none",
-              background: videoEnabled ? "var(--accent-primary)" : "#ef4444",
+              background: videoEnabled ? "var(--accent-primary)" : "var(--danger)",
               color: "white",
               cursor: "pointer",
               fontSize: "1rem",
@@ -962,9 +1021,9 @@ function Room() {
             onClick={screenStream ? stopScreenShare : shareScreen}
             style={{
               padding: "12px 20px",
-              borderRadius: "8px",
+              borderRadius: "6px",
               border: "none",
-              background: screenStream ? "#ef4444" : "var(--accent-secondary)",
+              background: screenStream ? "var(--danger)" : "var(--accent-secondary)",
               color: "white",
               cursor: "pointer",
               fontSize: "1rem",
@@ -981,9 +1040,9 @@ function Room() {
                 onClick={() => socketRef.current.emit("pdf-remove", { roomId })}
                 style={{
                   padding: "12px 20px",
-                  borderRadius: "8px",
+                  borderRadius: "6px",
                   border: "none",
-                  background: "#ef4444",
+                  background: "var(--danger)",
                   color: "white",
                   cursor: "pointer",
                   fontSize: "1rem",
@@ -1000,9 +1059,9 @@ function Room() {
                 disabled={uploadingPdf}
                 style={{
                   padding: "12px 20px",
-                  borderRadius: "8px",
+                  borderRadius: "6px",
                   border: "none",
-                  background: "#8b5cf6",
+                  background: "#6f42c1",
                   color: "white",
                   cursor: uploadingPdf ? "not-allowed" : "pointer",
                   fontSize: "1rem",
@@ -1024,9 +1083,9 @@ function Room() {
             onClick={leaveRoom}
             style={{
               padding: "12px 20px",
-              borderRadius: "8px",
+              borderRadius: "6px",
               border: "none",
-              background: "#dc2626",
+              background: "var(--danger)",
               color: "white",
               cursor: "pointer",
               fontSize: "1rem",
@@ -1042,17 +1101,17 @@ function Room() {
       {showChat && (
         <div style={{
           width: "350px",
-          background: "rgba(30, 30, 40, 0.95)",
-          borderLeft: "1px solid rgba(255,255,255,0.1)",
+          background: "#ffffff",
+          borderLeft: "1px solid var(--border-color)",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "-4px 0 10px rgba(0,0,0,0.3)"
+          boxShadow: "-2px 0 8px rgba(0,0,0,0.1)"
         }}>
           {/* Participants List - NEW FEATURE */}
           <div style={{
             padding: "15px",
-            borderBottom: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(0,0,0,0.2)"
+            borderBottom: "1px solid var(--border-color)",
+            background: "#f8f9fa"
           }}>
             <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--accent-secondary)" }}>
               👥 Participantes ({participants.length})
@@ -1085,8 +1144,8 @@ function Room() {
 
           <div style={{
             padding: "20px",
-            borderBottom: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(0,0,0,0.2)"
+            borderBottom: "1px solid var(--border-color)",
+            background: "#f8f9fa"
           }}>
             <h3 style={{
               margin: 0,
@@ -1151,16 +1210,16 @@ function Room() {
                     )}
                     <div style={{
                       background: isMe
-                        ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
-                        : "rgba(255,255,255,0.08)",
+                        ? "var(--accent-primary)"
+                        : "#e9ecef",
                       padding: "10px 14px",
                       borderRadius: isMe ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
                       maxWidth: "80%",
                       wordWrap: "break-word",
-                      boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.1)"
                     }}>
                       <div style={{
-                        color: "var(--text-primary)",
+                        color: isMe ? "white" : "var(--text-primary)",
                         fontSize: "0.95rem",
                         lineHeight: "1.4"
                       }}>
@@ -1183,10 +1242,10 @@ function Room() {
           </div>
           <form onSubmit={sendMessage} style={{
             padding: "15px",
-            borderTop: "1px solid rgba(255,255,255,0.1)",
+            borderTop: "1px solid var(--border-color)",
             display: "flex",
             gap: "10px",
-            background: "rgba(0,0,0,0.2)"
+            background: "#f8f9fa"
           }}>
             <input
               type="text"
@@ -1196,16 +1255,16 @@ function Room() {
               style={{
                 flex: 1,
                 padding: "12px",
-                borderRadius: "8px",
-                border: "1px solid rgba(255,255,255,0.1)",
-                background: "rgba(255,255,255,0.05)",
+                borderRadius: "6px",
+                border: "1px solid var(--border-color)",
+                background: "var(--bg-secondary)",
                 color: "var(--text-primary)",
                 fontSize: "0.95rem",
                 outline: "none",
                 transition: "all 0.2s"
               }}
               onFocus={(e) => e.target.style.borderColor = "var(--accent-primary)"}
-              onBlur={(e) => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
+              onBlur={(e) => e.target.style.borderColor = "var(--border-color)"}
             />
             <button
               type="submit"
@@ -1332,7 +1391,7 @@ function VideoCard({ peer, peerID, isActive, userName }) {
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          background: "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+          background: "#6c757d",
           position: "absolute",
           top: 0,
           left: 0
@@ -1346,13 +1405,13 @@ function VideoCard({ peer, peerID, isActive, userName }) {
             alignItems: "center",
             justifyContent: "center",
             fontSize: "2rem",
-            color: "white",
+            color: "#6c757d",
             fontWeight: "bold",
             marginBottom: "10px"
           }}>
             👤
           </div>
-          <div style={{ color: "white", fontSize: "0.8rem" }}>Cámara apagada</div>
+          <div style={{ color: "#f8f9fa", fontSize: "0.8rem" }}>Cámara apagada</div>
         </div>
       )}
 

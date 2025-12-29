@@ -95,9 +95,9 @@ function Home() {
           </p>
           <div style={{
             padding: '20px',
-            background: 'rgba(96, 165, 250, 0.1)',
+            background: '#f0f7ff',
             border: '2px solid var(--accent-primary)',
-            borderRadius: '12px',
+            borderRadius: '8px',
             marginBottom: '1.5rem'
           }}>
             <div style={{
@@ -119,7 +119,7 @@ function Home() {
               onClick={goToRoom}
               style={{
                 width: '100%',
-                background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))'
+                background: 'var(--accent-primary)'
               }}
             >
               Entrar a la Sala
@@ -129,9 +129,10 @@ function Home() {
               style={{
                 background: 'none',
                 border: 'none',
-                color: 'var(--text-secondary)',
+                color: 'var(--accent-primary)',
                 cursor: 'pointer',
-                padding: '10px'
+                padding: '10px',
+                textDecoration: 'underline'
               }}
             >
               Volver
@@ -166,9 +167,9 @@ function Home() {
           onClick={logout}
           style={{
             padding: '8px 16px',
-            borderRadius: '8px',
-            border: '1px solid rgba(255,255,255,0.2)',
-            background: 'rgba(255,255,255,0.05)',
+            borderRadius: '6px',
+            border: '1px solid var(--border-color)',
+            background: 'var(--bg-secondary)',
             color: 'var(--text-primary)',
             cursor: 'pointer',
             fontSize: '0.9rem'
@@ -182,9 +183,8 @@ function Home() {
         <h1 style={{
           marginBottom: '0.5rem',
           fontSize: '2.5rem',
-          background: 'linear-gradient(to right, #60a5fa, #a855f7)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent'
+          color: 'var(--accent-primary)',
+          fontWeight: '600'
         }}>
           Videoconferencia
         </h1>
@@ -226,8 +226,9 @@ function Home() {
               style={{
                 width: '100%',
                 fontSize: '1.1rem',
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.2)'
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-primary)'
               }}
             >
               📱 Unirse a Reunión
@@ -247,9 +248,9 @@ function Home() {
                 width: '100%',
                 padding: '15px',
                 marginBottom: '12px',
-                borderRadius: '8px',
-                border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.05)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-secondary)',
                 color: 'var(--text-primary)',
                 fontSize: '1.2rem',
                 textAlign: 'center',
@@ -276,9 +277,9 @@ function Home() {
                 style={{
                   flex: 1,
                   padding: '12px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  background: 'rgba(255,255,255,0.05)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  background: 'var(--bg-secondary)',
                   color: 'var(--text-primary)',
                   cursor: 'pointer',
                   fontSize: '1.1rem'

@@ -1,15 +1,19 @@
 :root {
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --accent-primary: #3b82f6;
-  --accent-secondary: #a855f7;
-  --accent-hover: #2563eb;
-  --danger: #ef4444;
-  --success: #22c55e;
-  --card-radius: 16px;
-  --video-radius: 12px;
+  --bg-primary: #f5f7fa;
+  --bg-secondary: #ffffff;
+  --text-primary: #1a1a1a;
+  --text-secondary: #6c757d;
+  --accent-primary: #0066cc;
+  --accent-secondary: #004a99;
+  --accent-hover: #0052a3;
+  --danger: #dc3545;
+  --success: #28a745;
+  --card-radius: 8px;
+  --video-radius: 8px;
+  --border-color: #dee2e6;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
 }
 
 /* Scrollbar styling */
@@ -19,16 +23,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: rgba(0, 0, 0, 0.3);
 }
 
 body {
@@ -89,23 +93,22 @@ h3 {
   background-color: var(--accent-primary);
   color: white;
   border: none;
-  padding: 12px 24px;
-  font-size: 1rem;
-  font-weight: 600;
-  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.5);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn:hover {
   background-color: var(--accent-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 6px 8px -1px rgba(59, 130, 246, 0.6);
+  box-shadow: var(--shadow-md);
 }
 
 .btn:disabled {
-  opacity: 0.7;
+  opacity: 0.6;
   cursor: not-allowed;
   transform: none;
 }
@@ -114,7 +117,8 @@ h3 {
   background-color: var(--bg-secondary);
   border-radius: var(--card-radius);
   padding: 2rem;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-lg);
 }
 
 /* Video Styles */
@@ -133,8 +137,8 @@ h3 {
   background-color: #000;
   border-radius: var(--video-radius);
   overflow: hidden;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
-  transition: transform 0.3s ease;
+  box-shadow: var(--shadow-md);
+  transition: transform 0.2s ease;
   width: 100%;
   max-width: 600px;
   aspect-ratio: 16/9;
@@ -150,7 +154,7 @@ video {
   height: 100%;
   object-fit: cover;
   display: block;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .video-label {

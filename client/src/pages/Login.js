@@ -65,10 +65,9 @@ function Login() {
                 <h1 style={{
                     marginBottom: '0.5rem',
                     fontSize: '2.5rem',
-                    background: 'linear-gradient(to right, #60a5fa, #a855f7)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                    textAlign: 'center'
+                    color: 'var(--accent-primary)',
+                    textAlign: 'center',
+                    fontWeight: '600'
                 }}>
                     Videoconferencia
                 </h1>
@@ -100,9 +99,9 @@ function Login() {
                                 style={{
                                     width: '100%',
                                     padding: '12px',
-                                    borderRadius: '8px',
-                                    border: '1px solid rgba(255,255,255,0.1)',
-                                    background: 'rgba(255,255,255,0.05)',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    background: 'var(--bg-secondary)',
                                     color: 'var(--text-primary)',
                                     fontSize: '1rem'
                                 }}
@@ -129,9 +128,9 @@ function Login() {
                             style={{
                                 width: '100%',
                                 padding: '12px',
-                                borderRadius: '8px',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                background: 'rgba(255,255,255,0.05)',
+                                borderRadius: '6px',
+                                border: '1px solid var(--border-color)',
+                                background: 'var(--bg-secondary)',
                                 color: 'var(--text-primary)',
                                 fontSize: '1rem'
                             }}
@@ -157,9 +156,9 @@ function Login() {
                             style={{
                                 width: '100%',
                                 padding: '12px',
-                                borderRadius: '8px',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                background: 'rgba(255,255,255,0.05)',
+                                borderRadius: '6px',
+                                border: '1px solid var(--border-color)',
+                                background: 'var(--bg-secondary)',
                                 color: 'var(--text-primary)',
                                 fontSize: '1rem'
                             }}
