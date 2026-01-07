@@ -603,11 +603,27 @@ io.on("connection", socket => {
   });
 
   // Audio/Video state changes
-  socket.on("toggle-audio", ({ roomId, userId, audioEnabled }) => {
+  socket.on("toggle-audio", async ({ roomId, userId, audioEnabled }) => {
+    try {
+      await Room.updateOne(
+        { roomId, "participantes.socketId": socket.id },
+        { $set: { "participantes.$.audioEnabled": audioEnabled } }
+      );
+    } catch (error) {
+      console.error("Error updating audio state:", error);
+    }
     socket.to(roomId).emit("user-audio-toggled", { userId, audioEnabled, socketId: socket.id });
   });
 
-  socket.on("toggle-video", ({ roomId, userId, videoEnabled }) => {
+  socket.on("toggle-video", async ({ roomId, userId, videoEnabled }) => {
+    try {
+      await Room.updateOne(
+        { roomId, "participantes.socketId": socket.id },
+        { $set: { "participantes.$.videoEnabled": videoEnabled } }
+      );
+    } catch (error) {
+      console.error("Error updating video state:", error);
+    }
     socket.to(roomId).emit("user-video-toggled", { userId, videoEnabled, socketId: socket.id });
   });
 

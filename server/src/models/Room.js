@@ -22,6 +22,14 @@ const roomSchema = new mongoose.Schema({
         joinedAt: {
             type: Date,
             default: Date.now
+        },
+        videoEnabled: {
+            type: Boolean,
+            default: true
+        },
+        audioEnabled: {
+            type: Boolean,
+            default: true
         }
     }],
     pdfActual: {

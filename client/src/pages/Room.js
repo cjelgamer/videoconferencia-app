@@ -308,6 +308,24 @@ function Room() {
       });
     });
 
+    socket.on("user-video-toggled", ({ userId, videoEnabled }) => {
+      setParticipants(prev => prev.map(p => {
+        if (p.userId === userId || p._id === userId || (p.userId && p.userId._id === userId)) {
+          return { ...p, videoEnabled };
+        }
+        return p;
+      }));
+    });
+
+    socket.on("user-audio-toggled", ({ userId, audioEnabled }) => {
+      setParticipants(prev => prev.map(p => {
+        if (p.userId === userId || p._id === userId || (p.userId && p.userId._id === userId)) {
+          return { ...p, audioEnabled };
+        }
+        return p;
+      }));
+    });
+
     // Screen sharing events
     socket.on("screen-share-active", ({ socketId }) => {
       console.log("Screen share started by:", socketId);
@@ -964,6 +982,7 @@ function Room() {
             {peers.map(({ peerID, peer }) => {
               const participant = participants.find(p => p.socketId === peerID);
               const name = participant ? participant.nombre : "Usuario";
+              const pVideoEnabled = participant ? participant.videoEnabled : true;
               return (
                 <VideoCard
                   key={peerID}
@@ -971,6 +990,8 @@ function Room() {
                   peerID={peerID}
                   userName={name}
                   isActive={activeSpeakers.has(peerID)}
+                  videoEnabled={pVideoEnabled !== undefined ? pVideoEnabled : true} // Pass server state
+                  initial={name.charAt(0)}
                 />
               );
             })}
@@ -1287,7 +1308,7 @@ function Room() {
   );
 }
 
-function VideoCard({ peer, peerID, isActive, userName }) {
+function VideoCard({ peer, peerID, isActive, userName, videoEnabled = true, initial }) {
   const ref = useRef();
   const [hasVideo, setHasVideo] = useState(true);
   const [status, setStatus] = useState("Conectando...");
@@ -1341,6 +1362,8 @@ function VideoCard({ peer, peerID, isActive, userName }) {
 
   }, [peer, peerID]);
 
+  const showVideo = hasVideo && videoEnabled;
+
   return (
     <div style={{
       position: "relative",
@@ -1362,7 +1385,7 @@ function VideoCard({ peer, peerID, isActive, userName }) {
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          display: hasVideo ? "block" : "none",
+          display: showVideo ? "block" : "none",
           backgroundColor: "#000" // Ensure black background if loading
         }}
       />
@@ -1378,12 +1401,13 @@ function VideoCard({ peer, peerID, isActive, userName }) {
         borderRadius: "4px",
         fontSize: "0.7rem",
         color: status.includes("Error") ? "#ff4444" : "#ffffff",
-        pointerEvents: "none"
+        pointerEvents: "none",
+        display: showVideo ? "block" : "none"
       }}>
         {status}
       </div>
 
-      {!hasVideo && (
+      {!showVideo && (
         <div style={{
           width: "100%",
           height: "100%",
@@ -1405,13 +1429,15 @@ function VideoCard({ peer, peerID, isActive, userName }) {
             alignItems: "center",
             justifyContent: "center",
             fontSize: "2rem",
-            color: "#6c757d",
+            color: "#f8f9fa",
             fontWeight: "bold",
             marginBottom: "10px"
           }}>
-            👤
+            {initial || "?"}
           </div>
-          <div style={{ color: "#f8f9fa", fontSize: "0.8rem" }}>Cámara apagada</div>
+          <div style={{ color: "#f8f9fa", fontSize: "0.8rem" }}>
+            {!videoEnabled ? "Cámara apagada" : "Cargando..."}
+          </div>
         </div>
       )}
 
